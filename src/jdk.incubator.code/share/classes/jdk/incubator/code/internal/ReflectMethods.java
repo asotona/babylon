@@ -112,6 +112,8 @@ import static com.sun.tools.javac.resources.CompilerProperties.Errors.*;
 import static com.sun.tools.javac.resources.CompilerProperties.Notes.*;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.ClassTransform;
 import java.lang.classfile.attribute.InnerClassInfo;
 import java.lang.classfile.attribute.InnerClassesAttribute;
 import java.lang.classfile.attribute.NestHostAttribute;
@@ -151,7 +153,8 @@ public class ReflectMethods extends TreeTranslator {
     private final CodeModelStorageOption codeModelStorageOption;
 
     private TreeMaker make;
-    private List<CoreOp.FuncOp> classOps;
+    private ListBuffer<JCTree> classOps;
+    private SequencedMap<String, Op> ops;
     private Symbol.ClassSymbol currentClassSym, synthClassSym;
     private int lambdaCount;
 
@@ -192,7 +195,9 @@ public class ReflectMethods extends TreeTranslator {
                     log.note(MethodIrDump(tree.sym.enclClass(), tree.sym, funcOp.toText()));
                 }
                 // create a static method that returns the op
-                classOps.add(opBuilder(methodName(symbolToMethodRef(tree.sym)).toString(), funcOp));
+                Name methodName = methodName(symbolToMethodRef(tree.sym));
+                classOps.add(opMethodDecl(methodName));
+                ops.put(methodName.toString(), funcOp);
             }
         }
         super.visitMethodDef(tree);
@@ -205,7 +210,8 @@ public class ReflectMethods extends TreeTranslator {
 
     @Override
     public void visitClassDef(JCClassDecl tree) {
-        List<CoreOp.FuncOp> prevClassOps = classOps;
+        ListBuffer<JCTree> prevClassOps = classOps;
+        SequencedMap<String, Op> prevOps = ops;
         Symbol.ClassSymbol prevClassSym = currentClassSym;
         Symbol.ClassSymbol prevSynthClassSym = synthClassSym;
         int prevLambdaCount = lambdaCount;
@@ -214,17 +220,18 @@ public class ReflectMethods extends TreeTranslator {
             lambdaCount = 0;
             currentClassSym = tree.sym;
             synthClassSym = new ClassSymbol(0, names.fromString("$CM"), currentClassSym);
-            classOps = new ArrayList<>();
+            classOps = new ListBuffer<>();
+            ops = new LinkedHashMap<>();
             super.visitClassDef(tree);
             if (!classOps.isEmpty()) {
-                String synthClassName = synthClassSym.flatName().toString();
-                classOps.addAll(OpBuilder.createSupportFunctions(JavaType.type(ClassDesc.of(synthClassName))));
-                synthClassDecl(synthClassName, classOps);
+                synthClassDecl();
                 currentClassSym.members().enter(synthClassSym);
             }
+            tree.defs = tree.defs.prependList(classOps.toList());
         } finally {
             lambdaCount = prevLambdaCount;
             classOps = prevClassOps;
+            ops = prevOps;
             currentClassSym = prevClassSym;
             synthClassSym = prevSynthClassSym;
             result = tree;
@@ -251,12 +258,12 @@ public class ReflectMethods extends TreeTranslator {
             }
             // create a static method that returns the FuncOp representing the lambda
             Name lambdaName = lambdaName();
-            MethodSymbol opMethodSymbol = opMethodSymbol(lambdaName);
-            CoreOp.FuncOp opMethod = opBuilder(lambdaName.toString(), funcOp);
+            JCMethodDecl opMethod = opMethodDecl(lambdaName);
             classOps.add(opMethod);
+            ops.put(lambdaName.toString(), funcOp);
 
             // leave the lambda in place, but also leave a trail for LambdaToMethod
-            tree.codeModel = opMethodSymbol;
+            tree.codeModel = opMethod.sym;
         }
         super.visitLambda(tree);
     }
@@ -284,9 +291,10 @@ public class ReflectMethods extends TreeTranslator {
             }
             // create a method that returns the FuncOp representing the lambda
             Name lambdaName = lambdaName();
-            CoreOp.FuncOp opMethod = opBuilder(lambdaName.toString(), funcOp);
+            JCMethodDecl opMethod = opMethodDecl(lambdaName);
             classOps.add(opMethod);
-            tree.codeModel = opMethodSymbol(lambdaName);
+            ops.put(lambdaName.toString(), funcOp);
+            tree.codeModel = opMethod.sym;
             super.visitReference(tree);
             if (recvDecl != null) {
                 result = copyReferenceWithReceiverVar(tree, recvDecl);
@@ -365,27 +373,31 @@ public class ReflectMethods extends TreeTranslator {
         }
     }
 
-    private CoreOp.FuncOp opBuilder(String methodName, CoreOp.FuncOp op) {
+    private CoreOp.ModuleOp opBuilder() {
         // Create the method body
         // Code model is stored as code that builds the code model
         // using the builder API and public APIs
         return OpBuilder.createBuilderFunction(
-                symbolToErasedDesc(synthClassSym),
-                methodName,
-                op,
+                ops,
                 b -> b.op(JavaOp.fieldLoad(
                         FieldRef.field(JavaOp.class, "JAVA_DIALECT_FACTORY", DialectFactory.class))));
 
     }
 
-    private MethodSymbol opMethodSymbol(Name methodName) {
-        // Create the method that constructs the code model stored in the class file
+    private JCMethodDecl opMethodDecl(Name methodName) {
+        // Create the method that calls the same method in the synth. class
         var mt = new MethodType(com.sun.tools.javac.util.List.nil(), crSyms.opType,
                 com.sun.tools.javac.util.List.nil(), syms.methodClass);
-        return new MethodSymbol(PRIVATE | STATIC | SYNTHETIC, methodName, mt, synthClassSym);
+        var ms = new MethodSymbol(PRIVATE | STATIC | SYNTHETIC, methodName, mt, currentClassSym);
+        currentClassSym.members().enter(ms);
+
+        var body = make.Return(make.App(make.Ident(new MethodSymbol(ClassFile.ACC_STATIC, methodName, mt, synthClassSym))));
+
+        var md = make.MethodDef(ms, make.Block(0, com.sun.tools.javac.util.List.of(body)));
+        return md;
     }
 
-    private Type synthClassDecl(String className, List<CoreOp.FuncOp> funcs) {
+    private void synthClassDecl() {
         try {
             JavaFileManager.Location outLocn;
             if (fileManager.hasLocation(StandardLocation.MODULE_SOURCE_PATH)) {
@@ -393,22 +405,19 @@ public class ReflectMethods extends TreeTranslator {
             } else {
                 outLocn = StandardLocation.CLASS_OUTPUT;
             }
+            String className = synthClassSym.flatName().toString();
             JavaFileObject outFile = fileManager.getJavaFileForOutput(outLocn, className, JavaFileObject.Kind.CLASS, currentClassSym.sourcefile);
-            ClassDesc synthCD = ClassDesc.of(className);
             ClassDesc parentClass = ClassDesc.of(currentClassSym.className());
-            byte[] data = BytecodeGenerator.generateClassData(
-                        MethodHandles.lookup(),
-                        synthCD,
-                        CoreOp.FuncOp::funcName,
-                        clb -> {
-                            clb.with(InnerClassesAttribute.of(InnerClassInfo.of(synthCD, Optional.of(parentClass), Optional.of("$CM"))));
-                            clb.with(NestHostAttribute.of(parentClass));
-                        },
-                        funcs.toArray(CoreOp.FuncOp[]::new));
+            CoreOp.ModuleOp module = opBuilder();
+            byte[] data = BytecodeGenerator.generateClassData(MethodHandles.lookup(), className, module);
+            // inject InnerClassesAttribute and NestHostAttribute
+            data = ClassFile.of().transformClass(ClassFile.of().parse(data), ClassTransform.endHandler(clb ->
+                    clb.with(InnerClassesAttribute.of(InnerClassInfo.of(ClassDesc.of(className), Optional.of(parentClass), Optional.of("$CM"), ClassFile.ACC_STATIC)))
+                       .with(NestHostAttribute.of(parentClass))));
             try (OutputStream out = outFile.openOutputStream()) {
                 out.write(data);
             }
-            return syms.enterClass(currentClassSym.packge().modle, className);
+            currentClassSym.members().enter(synthClassSym);
         } catch (IOException e) {
             throw new IllegalStateException(e);
         }
