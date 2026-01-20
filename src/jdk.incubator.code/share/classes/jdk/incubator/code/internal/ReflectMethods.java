@@ -27,6 +27,7 @@ package jdk.incubator.code.internal;
 
 import com.sun.source.tree.LambdaExpressionTree;
 import com.sun.source.tree.MemberReferenceTree.ReferenceMode;
+import com.sun.tools.javac.code.Attribute;
 import com.sun.tools.javac.code.Kinds.Kind;
 import com.sun.tools.javac.code.Symbol;
 import com.sun.tools.javac.code.Symbol.ClassSymbol;
@@ -229,6 +230,11 @@ public class ReflectMethods extends TreeTranslatorPrev {
                 Name methodName = methodName(symbolToMethodRef(tree.sym));
                 opMethodDecls.add(opMethodDecl(methodName));
                 ops.put(methodName.toString(), funcOp);
+                if (reflectAll && tree.sym.attribute(crSyms.codeReflectionType.tsym) == null) {
+                    // add @Reflect annotation
+                    tree.sym.appendAttributes(com.sun.tools.javac.util.List.of(
+                            new Attribute.Compound(crSyms.codeReflectionType, com.sun.tools.javac.util.List.nil())));
+                }
             }
         }
         boolean prevCodeReflectionEnabled = codeReflectionEnabled;
