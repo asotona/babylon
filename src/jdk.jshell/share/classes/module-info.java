@@ -70,6 +70,7 @@ module jdk.jshell {
     requires jdk.internal.le;
     requires jdk.internal.md;
     requires jdk.internal.opt;
+    requires jdk.incubator.code;
 
     requires transitive java.compiler;
     requires transitive java.prefs;

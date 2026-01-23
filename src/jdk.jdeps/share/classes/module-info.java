@@ -64,6 +64,7 @@ module jdk.jdeps {
     requires java.compiler;
     requires jdk.compiler;
     requires jdk.internal.opt;
+    requires jdk.incubator.code;
 
     uses com.sun.tools.javac.platform.PlatformProvider;
 
