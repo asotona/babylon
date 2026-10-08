@@ -1037,11 +1037,15 @@ public class ReflectMethods extends TreeTranslatorPrev {
             switch (sym.getKind()) {
                 case LOCAL_VARIABLE -> {
                     if (sym instanceof VarSymbol variable && variable.getConstantValue() != null) {
-                        Value local = stack.localToOp.get(sym);
-                        // reuse a definition in this body, become a new literal otherwise
-                        result = local != null && !(local.type() instanceof VarType) ? local
-                                : append(CoreOp.constant(typeToCodeType(tree.type), variable.getConstantValue()));
-                        stack.localToOp.put(sym, result);
+                        // reuse a definition
+                        Value local = null;
+                        for (BodyStack s = stack; s != null && local == null; s = s.parent) {
+                            local = s.localToOp.get(sym);
+                        }
+                        BodyStack where = local == null && isLambdaReflectable ? top : stack;
+                        result = local != null ? local
+                                : append(CoreOp.constant(typeToCodeType(tree.type), variable.getConstantValue()), generateLocation(pos(), false), where);
+                        where.localToOp.put(sym, result);
                     } else {
                         result = loadVar(sym);
                     }
