@@ -35,7 +35,6 @@ import java.lang.annotation.Target;
 public @interface CodeModelGetters {
     Entry[] value();
 
-    @Target({})
     @interface Entry {
         String implementation();
         String getter();

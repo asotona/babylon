@@ -2919,10 +2919,11 @@ public class ReflectMethods extends TreeTranslatorPrev {
                 byte[] data = BytecodeGenerator.generateClassData(MethodHandles.lookup(), classDesc, module);
                 // inject InnerClassesAttribute and NestHostAttribute
                 data = ClassFile.of().transformClass(ClassFile.of().parse(data), ClassTransform.endHandler(clb ->
-                        clb.with(InnerClassesAttribute.of(InnerClassInfo.of(classDesc,
-                                 Optional.of(hostClass),
-                                 Optional.of(rmcdef.codeModelsClass.name.toString()),
-                                 ClassFile.ACC_STATIC)))
+                        clb.with(InnerClassesAttribute.of(
+                                InnerClassInfo.of(classDesc,
+                                                  Optional.of(hostClass),
+                                                  Optional.of(rmcdef.codeModelsClass.name.toString()),
+                                                  ClassFile.ACC_STATIC)))
                            .with(NestHostAttribute.of(hostClass))));
                 try (OutputStream out = outFile.openOutputStream()) {
                     out.write(data);
