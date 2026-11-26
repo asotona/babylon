@@ -980,9 +980,7 @@ public class LambdaToMethod extends TreeTranslator {
 
         Name lambdaName = samSym.name;
         if (tree.codeReflectionInfo != null) {
-            JCMethodDecl codeModel = tree.codeReflectionInfo.codeModel();
-            codeModel.name = codeModel.sym.name = names.fromString("op$").append(refSym.name);
-            kInfo.addMethod(codeModel);
+            tree.codeReflectionInfo.registerImplementation().accept(refSym);
         }
         Type lambdaMetafactory = tree.codeReflectionInfo != null ?
                 tree.codeReflectionInfo.reflectableLambdaMetafactory() : syms.lambdaMetafactory;

@@ -38,8 +38,10 @@ import jdk.incubator.code.dialect.core.FunctionType;
 import jdk.incubator.code.dialect.core.TupleType;
 import jdk.incubator.code.dialect.core.VarType;
 import jdk.incubator.code.dialect.java.*;
+import jdk.incubator.code.internal.CodeModelGetters;
 
 import java.lang.classfile.*;
+import java.lang.classfile.attribute.RuntimeVisibleAnnotationsAttribute;
 import java.lang.classfile.instruction.SwitchCase;
 import java.lang.constant.*;
 import java.lang.invoke.MethodHandle;
@@ -65,6 +67,10 @@ public final class BytecodeGenerator {
             "makeConcat",
             CD_CallSite);
 
+    private static final ClassDesc CD_CodeModelGetters =
+            CodeModelGetters.class.describeConstable().orElseThrow();
+    private static final ClassDesc CD_CodeModelGetter_Entry =
+            CodeModelGetters.Entry.class.describeConstable().orElseThrow();
     private static final MethodTypeDesc MTD_FIND_FIELD =
             MethodTypeDesc.of(CD_MethodHandle, CD_Class, CD_String, CD_Class);
     private static final MethodTypeDesc MTD_FIND_METHOD =
@@ -152,8 +158,17 @@ public final class BytecodeGenerator {
     private static <O extends Op & Op.Invokable> byte[] generateClassData(MethodHandles.Lookup lookup,
                                                                           ClassDesc clName,
                                                                           SequencedMap<String, ? extends O> ops) {
-        ModuleOp module = LoweringTransformer.transform(lookup, ops);
+        var modelGetters = new LinkedHashMap<String, String>();
+        ModuleOp module = LoweringTransformer.transform(lookup, ops, modelGetters);
         byte[] classBytes = ClassFile.of().build(clName, clb -> {
+            if (!modelGetters.isEmpty()) {
+                clb.with(RuntimeVisibleAnnotationsAttribute.of(
+                        Annotation.of(CD_CodeModelGetters, AnnotationElement.of("value",
+                                AnnotationValue.ofArray(modelGetters.entrySet().stream().<AnnotationValue>map(link ->
+                                        AnnotationValue.ofAnnotation(Annotation.of(CD_CodeModelGetter_Entry,
+                                                AnnotationElement.ofString("implementation", link.getKey()),
+                                                AnnotationElement.ofString("getter", link.getValue())))).toList())))));
+            }
             for (var e : module.functionTable().sequencedEntrySet()) {
                 generateMethod(lookup, clName, e.getKey(), e.getValue(), clb, module.functionTable());
             }

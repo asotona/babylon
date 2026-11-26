@@ -45,6 +45,7 @@ import java.util.List;
 import jdk.incubator.code.Op;
 import jdk.incubator.code.Quoted;
 import jdk.incubator.code.dialect.core.CoreOp.FuncOp;
+import jdk.incubator.code.internal.CodeModelGetters;
 import jdk.internal.access.JavaLangInvokeAccess;
 import jdk.internal.access.SharedSecrets;
 
@@ -169,7 +170,17 @@ public class ReflectableLambdaMetafactory {
             throws LambdaConversionException {
         try {
             MethodHandleInfo info = lookup.revealDirect(implementation);
-            return lookup.findStatic(info.getDeclaringClass(), "op$" + info.getName(), MethodType.methodType(Op.class));
+            Class<?> owner = info.getDeclaringClass();
+            CodeModelGetters models = owner.getDeclaredAnnotation(CodeModelGetters.class);
+            if (models != null) {
+                String descriptor = info.getMethodType().descriptorString();
+                for (var entry : models.value()) {
+                    if (info.getName().equals(entry.implementation())) {
+                        return lookup.findStatic(owner, entry.getter(), MethodType.methodType(Op.class));
+                    }
+                }
+            }
+            throw new LambdaConversionException("No code model getter for " + info);
         } catch (ReflectiveOperationException | IllegalArgumentException ex) {
             throw new LambdaConversionException(ex);
         }

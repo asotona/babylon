@@ -94,20 +94,23 @@ final class LambdaExpansionTransformer implements CodeTransformer {
 
     private final MethodHandles.Lookup lookup;
     private final Set<String> names;
+    private final Map<String, String> modelGetters;
     private final List<FuncOp> functions = new ArrayList<>();
     private final LinkedHashMap<String, FuncOp> modelsToBuild = new LinkedHashMap<>();
     private int nextLambdaIndex;
     // used for expression constants evaluation only
     private final ConstantValueAnalysis constants = new ConstantValueAnalysis(_ -> List.of());
 
-    private LambdaExpansionTransformer(MethodHandles.Lookup lookup, Set<String> names) {
+    private LambdaExpansionTransformer(MethodHandles.Lookup lookup, Set<String> names, Map<String, String> modelGetters) {
         this.lookup = lookup;
         this.names = new LinkedHashSet<>(names);
+        this.modelGetters = modelGetters;
     }
 
     static <O extends Op & Op.Invokable> CoreOp.ModuleOp transform(MethodHandles.Lookup lookup,
-                                                                   SequencedMap<String, ? extends O> ops) {
-        return new LambdaExpansionTransformer(lookup, ops.sequencedKeySet()).transform(ops);
+                                                                   SequencedMap<String, ? extends O> ops,
+                                                                   Map<String, String> modelGetters) {
+        return new LambdaExpansionTransformer(lookup, ops.sequencedKeySet(), modelGetters).transform(ops);
     }
 
     private <O extends Op & Op.Invokable> CoreOp.ModuleOp transform(SequencedMap<String, ? extends O> ops) {
@@ -163,16 +166,12 @@ final class LambdaExpansionTransformer implements CodeTransformer {
 
     }
 
-    private static String uniqueName(Set<String> names, String name, boolean reflectable) {
-        if (names.add(name) && (!reflectable || names.add("op$" + name))) {
-            return name;
+    private String uniqueName(String name) {
+        String candidate = name;
+        for (int i = 0; !names.add(candidate); i++) {
+            candidate = name + "$" + i;
         }
-        for (int i = 0; ; i++) {
-            String n = name + "$" + i;
-            if (names.add(n) && (!reflectable || names.add("op$" + n))) {
-                return n;
-            }
-        }
+        return candidate;
     }
 
     @Override
@@ -194,7 +193,7 @@ final class LambdaExpansionTransformer implements CodeTransformer {
             // filter out constant captures
             List<Value> captures = lop.capturedValues().stream().filter(v -> constants.evaluate(v).isEmpty()).toList();
             int i = nextLambdaIndex++;
-            String implName = uniqueName(names, "lambda$" + i, lop.isReflectable());
+            String implName = uniqueName("lambda$" + i);
             String intfMethodName = intfMethod.getName();
             List<ConstantDesc> additionalBootstrapArgs = new ArrayList<>();
             if (!additionalIntfClasses.isEmpty()) {
@@ -209,7 +208,8 @@ final class LambdaExpansionTransformer implements CodeTransformer {
                     ? DMHD_LAMBDA_METAFACTORY : DMHD_LAMBDA_ALT_METAFACTORY;
             FuncOp quotation = lambdaToQuotation(lop);
             if (lop.isReflectable()) {
-                String modelName = "op$" + implName;
+                String modelName = uniqueName("op$" + i);
+                modelGetters.put(implName, modelName);
                 modelsToBuild.put(modelName, quotation);
                 lambdaMetafactory = additionalBootstrapArgs.isEmpty()
                         ? DMHD_REFLECTABLE_LAMBDA_METAFACTORY
