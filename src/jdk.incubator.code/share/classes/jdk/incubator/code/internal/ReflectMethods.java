@@ -126,6 +126,7 @@ import static com.sun.tools.javac.code.TypeTag.NONE;
 import static com.sun.tools.javac.main.Option.G_CUSTOM;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.lang.classfile.ClassFile;
 import java.lang.classfile.ClassTransform;
 import java.lang.classfile.attribute.InnerClassInfo;
@@ -2917,11 +2918,13 @@ public class ReflectMethods extends TreeTranslatorPrev {
                                 FieldRef.field(JavaOp.class, "JAVA_DIALECT_FACTORY", DialectFactory.class))));
                 byte[] data = BytecodeGenerator.generateClassData(MethodHandles.lookup(), classDesc, module);
                 // inject InnerClassesAttribute and NestHostAttribute
-                ClassFile classFile = ClassFile.of();
-                data = classFile.transformClass(classFile.parse(data), ClassTransform.endHandler(clb ->
-                        clb.with(InnerClassesAttribute.of(InnerClassInfo.of(classDesc, Optional.of(hostClass), Optional.of(rmcdef.codeModelsClass.name.toString()), ClassFile.ACC_STATIC)))
+                data = ClassFile.of().transformClass(ClassFile.of().parse(data), ClassTransform.endHandler(clb ->
+                        clb.with(InnerClassesAttribute.of(InnerClassInfo.of(classDesc,
+                                 Optional.of(hostClass),
+                                 Optional.of(rmcdef.codeModelsClass.name.toString()),
+                                 ClassFile.ACC_STATIC)))
                            .with(NestHostAttribute.of(hostClass))));
-                try (var out = outFile.openOutputStream()) {
+                try (OutputStream out = outFile.openOutputStream()) {
                     out.write(data);
                 }
             }
