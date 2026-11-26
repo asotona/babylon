@@ -2869,20 +2869,20 @@ public class ReflectMethods extends TreeTranslatorPrev {
 
         @Override
         public void genCode(Context context, JCClassDecl cdef) throws IOException {
-            if (cdef instanceof JCReflectMethodsClassDecl tree) {
+            if (cdef instanceof JCReflectMethodsClassDecl rmcdef) {
                 Names names = Names.instance(context);
-                TreeMaker make = TreeMaker.instance(context).forToplevel(null).at(tree.pos());
+                TreeMaker make = TreeMaker.instance(context).forToplevel(null).at(rmcdef.pos());
                 var getters = new ListBuffer<JCTree>();
-                for (String getterName : tree.ops.keySet()) {
+                for (String getterName : rmcdef.ops.keySet()) {
                     Name name = names.fromString(getterName);
                     var body = make.Return(make.App(make.Ident(
-                            new MethodSymbol(PRIVATE | STATIC | SYNTHETIC, name, tree.getterType, tree.codeModelsClass))));
-                    var getter = new MethodSymbol(PRIVATE | STATIC | SYNTHETIC, name, tree.getterType, tree.sym);
+                            new MethodSymbol(PRIVATE | STATIC | SYNTHETIC, name, rmcdef.getterType, rmcdef.codeModelsClass))));
+                    var getter = new MethodSymbol(PRIVATE | STATIC | SYNTHETIC, name, rmcdef.getterType, rmcdef.sym);
                     getters.add(make.MethodDef(getter, make.Block(0, com.sun.tools.javac.util.List.of(body))));
-                    tree.sym.members().enter(getter);
+                    rmcdef.sym.members().enter(getter);
                 }
-                tree.defs = tree.defs.prependList(getters.toList());
-                if (!tree.lambdaGetters.isEmpty()) {
+                rmcdef.defs = rmcdef.defs.prependList(getters.toList());
+                if (!rmcdef.lambdaGetters.isEmpty()) {
                     // add class annotation
                     Symtab syms = Symtab.instance(context);
                     var module = syms.enterModule(names.jdk_incubator_code);
@@ -2890,7 +2890,7 @@ public class ReflectMethods extends TreeTranslatorPrev {
                     var entry = syms.enterClass(module, names.fromString(CodeModelGetters.Entry.class.getName()));
                     var members = entry.members();
                     var entries = new ListBuffer<Attribute>();
-                    for (var link : tree.lambdaGetters.sequencedEntrySet()) {
+                    for (var link : rmcdef.lambdaGetters.sequencedEntrySet()) {
                         entries.add(new Attribute.Compound(entry.type, com.sun.tools.javac.util.List.of(
                                 Pair.of((MethodSymbol) members.findFirst(names.fromString("implementation")),
                                         new Attribute.Constant(syms.stringType, link.getKey().toString())),
@@ -2898,28 +2898,28 @@ public class ReflectMethods extends TreeTranslatorPrev {
                                         new Attribute.Constant(syms.stringType, link.getValue())))));
                     }
                     var value = (MethodSymbol) annotation.members().findFirst(names.value);
-                    tree.sym.appendAttributes(com.sun.tools.javac.util.List.of(new Attribute.Compound(
+                    rmcdef.sym.appendAttributes(com.sun.tools.javac.util.List.of(new Attribute.Compound(
                             annotation.type, com.sun.tools.javac.util.List.of(
                                     Pair.of(value, new Attribute.Array(value.getReturnType(), entries.toList()))))));
                 }
                 JavaFileManager fileManager = context.get(JavaFileManager.class);
                 var outLocn = fileManager.hasLocation(StandardLocation.MODULE_SOURCE_PATH)
-                        ? fileManager.getLocationForModule(StandardLocation.CLASS_OUTPUT, tree.sym.packge().modle.name.toString())
+                        ? fileManager.getLocationForModule(StandardLocation.CLASS_OUTPUT, rmcdef.sym.packge().modle.name.toString())
                         : StandardLocation.CLASS_OUTPUT;
-                String className = tree.codeModelsClass.flatName().toString();
+                String className = rmcdef.codeModelsClass.flatName().toString();
                 ClassDesc classDesc = ClassDesc.of(className);
-                JavaFileObject outFile = fileManager.getJavaFileForOutput(outLocn, className, JavaFileObject.Kind.CLASS, tree.sym.sourcefile);
-                ClassDesc hostClass = ClassDesc.of(tree.sym.flatName().toString());
+                JavaFileObject outFile = fileManager.getJavaFileForOutput(outLocn, className, JavaFileObject.Kind.CLASS, rmcdef.sym.sourcefile);
+                ClassDesc hostClass = ClassDesc.of(rmcdef.sym.flatName().toString());
 
                 CoreOp.ModuleOp module = OpBuilder.createBuilderFunctions(
-                        tree.ops,
+                        rmcdef.ops,
                         b -> b.add(JavaOp.fieldLoad(
                                 FieldRef.field(JavaOp.class, "JAVA_DIALECT_FACTORY", DialectFactory.class))));
                 byte[] data = BytecodeGenerator.generateClassData(MethodHandles.lookup(), classDesc, module);
                 // inject InnerClassesAttribute and NestHostAttribute
                 ClassFile classFile = ClassFile.of();
                 data = classFile.transformClass(classFile.parse(data), ClassTransform.endHandler(clb ->
-                        clb.with(InnerClassesAttribute.of(InnerClassInfo.of(classDesc, Optional.of(hostClass), Optional.of(tree.codeModelsClass.name.toString()), ClassFile.ACC_STATIC)))
+                        clb.with(InnerClassesAttribute.of(InnerClassInfo.of(classDesc, Optional.of(hostClass), Optional.of(rmcdef.codeModelsClass.name.toString()), ClassFile.ACC_STATIC)))
                            .with(NestHostAttribute.of(hostClass))));
                 try (var out = outFile.openOutputStream()) {
                     out.write(data);
